@@ -11,25 +11,40 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnClickListener;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import androidx.biometric.BiometricPrompt;
 import androidx.fragment.app.FragmentActivity;
 import androidx.lifecycle.DefaultLifecycleObserver;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
 import io.flutter.plugin.common.MethodCall;
+
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.Key;
+import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
 import java.util.concurrent.Executor;
 
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKey;
+
 /**
- * Authenticates the user with biometrics and sends corresponding response back to Flutter.
+ * Authenticates the user with fingerprint and sends corresponding response back to Flutter.
  *
  * <p>One instance per call is generated to ensure readable separation of executable paths across
  * method calls.
@@ -37,8 +52,10 @@ import java.util.concurrent.Executor;
 @SuppressWarnings("deprecation")
 class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
     implements Application.ActivityLifecycleCallbacks, DefaultLifecycleObserver {
+
   /** The callback that handles the result of this authentication process. */
   interface AuthCompletionHandler {
+
     /** Called when authentication was successful. */
     void onSuccess();
 
@@ -68,48 +85,64 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
   private final UiThreadExecutor uiThreadExecutor;
   private boolean activityPaused = false;
   private BiometricPrompt biometricPrompt;
+  BiometricPrompt.CryptoObject cryptoObject ;
+  boolean anyCryptoException = false;
 
   AuthenticationHelper(
       Lifecycle lifecycle,
       FragmentActivity activity,
       MethodCall call,
-      AuthCompletionHandler completionHandler,
-      boolean allowCredentials) {
+      AuthCompletionHandler completionHandler) {
     this.lifecycle = lifecycle;
     this.activity = activity;
     this.completionHandler = completionHandler;
     this.call = call;
     this.isAuthSticky = call.argument("stickyAuth");
     this.uiThreadExecutor = new UiThreadExecutor();
-
-    BiometricPrompt.PromptInfo.Builder promptBuilder =
+    this.promptInfo =
         new BiometricPrompt.PromptInfo.Builder()
             .setDescription((String) call.argument("localizedReason"))
             .setTitle((String) call.argument("signInTitle"))
-            .setSubtitle((String) call.argument("biometricHint"))
+            .setSubtitle((String) call.argument("fingerprintHint"))
+            .setNegativeButtonText((String) call.argument("cancelButton"))
             .setConfirmationRequired((Boolean) call.argument("sensitiveTransaction"))
-            .setConfirmationRequired((Boolean) call.argument("sensitiveTransaction"));
-
-    if (allowCredentials) {
-      promptBuilder.setDeviceCredentialAllowed(true);
-    } else {
-      promptBuilder.setNegativeButtonText((String) call.argument("cancelButton"));
-    }
-    this.promptInfo = promptBuilder.build();
+            .build();
   }
 
-  /** Start the biometric listener. */
+  /** Start the fingerprint listener. */
   void authenticate() {
     if (lifecycle != null) {
       lifecycle.addObserver(this);
     } else {
       activity.getApplication().registerActivityLifecycleCallbacks(this);
     }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      try {
+        cryptoObject = new BiometricPrompt.CryptoObject(getEncryptCipher(createKey()));
+      } catch (NoSuchPaddingException e) {
+        e.printStackTrace();
+        anyCryptoException = true;
+      } catch (NoSuchAlgorithmException e) {
+        e.printStackTrace();
+        anyCryptoException = true;
+      } catch (InvalidKeyException e) {
+        e.printStackTrace();
+        anyCryptoException = true;
+      } catch (NoSuchProviderException e) {
+        e.printStackTrace();
+        anyCryptoException = true;
+      } catch (InvalidAlgorithmParameterException e) {
+        e.printStackTrace();
+        anyCryptoException = true;
+      }
+    } else {
+      anyCryptoException = true;
+    }
     biometricPrompt = new BiometricPrompt(activity, uiThreadExecutor, this);
-    biometricPrompt.authenticate(promptInfo);
+    biometricPrompt.authenticate(promptInfo, cryptoObject);
   }
 
-  /** Cancels the biometric authentication. */
+  /** Cancels the fingerprint authentication. */
   void stopAuthentication() {
     if (biometricPrompt != null) {
       biometricPrompt.cancelAuthentication();
@@ -117,7 +150,7 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
     }
   }
 
-  /** Stops the biometric listener. */
+  /** Stops the fingerprint listener. */
   private void stop() {
     if (lifecycle != null) {
       lifecycle.removeObserver(this);
@@ -131,28 +164,21 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
   public void onAuthenticationError(int errorCode, CharSequence errString) {
     switch (errorCode) {
       case BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL:
-        if (call.argument("useErrorDialogs")) {
-          showGoToSettingsDialog(
-              (String) call.argument("deviceCredentialsRequired"),
-              (String) call.argument("deviceCredentialsSetupDescription"));
-          return;
-        }
-        completionHandler.onError("NotAvailable", "Security credentials not available.");
+        completionHandler.onError(
+            "PasscodeNotSet",
+            "Phone not secured by PIN, pattern or password, or SIM is currently locked.");
         break;
       case BiometricPrompt.ERROR_NO_SPACE:
       case BiometricPrompt.ERROR_NO_BIOMETRICS:
-        if (promptInfo.isDeviceCredentialAllowed()) return;
         if (call.argument("useErrorDialogs")) {
-          showGoToSettingsDialog(
-              (String) call.argument("biometricRequired"),
-              (String) call.argument("goToSettingDescription"));
+          showGoToSettingsDialog();
           return;
         }
         completionHandler.onError("NotEnrolled", "No Biometrics enrolled on this device.");
         break;
       case BiometricPrompt.ERROR_HW_UNAVAILABLE:
       case BiometricPrompt.ERROR_HW_NOT_PRESENT:
-        completionHandler.onError("NotAvailable", "Security credentials not available.");
+        completionHandler.onError("NotAvailable", "Biometrics is not available on this device.");
         break;
       case BiometricPrompt.ERROR_LOCKOUT:
         completionHandler.onError(
@@ -179,9 +205,41 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
     stop();
   }
 
+  @RequiresApi(api = Build.VERSION_CODES.M)
+  private SecretKey createKey() throws NoSuchProviderException, NoSuchAlgorithmException, InvalidAlgorithmParameterException {
+    String algorithm = KeyProperties.KEY_ALGORITHM_AES;
+    String provider = "AndroidKeyStore";
+    KeyGenerator keyGenerator = KeyGenerator.getInstance(algorithm, provider);
+    KeyGenParameterSpec keyGenParameterSpec = new KeyGenParameterSpec.Builder("MobilyAuth", KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_CBC)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_PKCS7)
+            .setUserAuthenticationRequired(true).setUserAuthenticationValidityDurationSeconds(-1)
+            .build();
+
+    keyGenerator.init(keyGenParameterSpec);
+    return keyGenerator.generateKey();
+  }
+
+  private Cipher getEncryptCipher(Key key) throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidKeyException {
+    String algorithm = KeyProperties.KEY_ALGORITHM_AES;
+    String blockMode = KeyProperties.BLOCK_MODE_CBC;
+    String padding = KeyProperties.ENCRYPTION_PADDING_PKCS7;
+    Cipher cipher = Cipher.getInstance(algorithm+"/"+blockMode+"/"+padding);
+    cipher.init(Cipher.ENCRYPT_MODE, key);
+    return cipher;
+  }
+
   @Override
   public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
-    completionHandler.onSuccess();
+    if (anyCryptoException == true) {
+      completionHandler.onSuccess();
+    } else {
+      if (cryptoObject != null && result != null && result.getCryptoObject() != null && cryptoObject.getCipher() == result.getCryptoObject().getCipher()) {
+        completionHandler.onSuccess();
+      } else {
+        completionHandler.onFailure();
+      }
+    }
     stop();
   }
 
@@ -189,7 +247,7 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
   public void onAuthenticationFailed() {}
 
   /**
-   * If the activity is paused, we keep track because biometric dialog simply returns "User
+   * If the activity is paused, we keep track because fingerprint dialog simply returns "User
    * cancelled" when the activity is paused.
    */
   @Override
@@ -228,12 +286,12 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
 
   // Suppress inflateParams lint because dialogs do not need to attach to a parent view.
   @SuppressLint("InflateParams")
-  private void showGoToSettingsDialog(String title, String descriptionText) {
+  private void showGoToSettingsDialog() {
     View view = LayoutInflater.from(activity).inflate(R.layout.go_to_setting, null, false);
     TextView message = (TextView) view.findViewById(R.id.fingerprint_required);
     TextView description = (TextView) view.findViewById(R.id.go_to_setting_description);
-    message.setText(title);
-    description.setText(descriptionText);
+    message.setText((String) call.argument("fingerprintRequired"));
+    description.setText((String) call.argument("goToSettingDescription"));
     Context context = new ContextThemeWrapper(activity, R.style.AlertDialogCustom);
     OnClickListener goToSettingHandler =
         new OnClickListener() {
