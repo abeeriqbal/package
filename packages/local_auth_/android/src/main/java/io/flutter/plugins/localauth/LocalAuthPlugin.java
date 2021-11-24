@@ -4,9 +4,8 @@
 
 package io.flutter.plugins.localauth;
 
-
-import android.content.pm.PackageManager;
 import android.app.Activity;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import androidx.fragment.app.FragmentActivity;
 import androidx.lifecycle.Lifecycle;
