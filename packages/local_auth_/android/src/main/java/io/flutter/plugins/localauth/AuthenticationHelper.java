@@ -92,14 +92,11 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
       Lifecycle lifecycle,
       FragmentActivity activity,
       MethodCall call,
-      AuthCompletionHandler completionHandler
-      boolean bool,
-      ) {
+      AuthCompletionHandler completionHandler) {
     this.lifecycle = lifecycle;
     this.activity = activity;
     this.completionHandler = completionHandler;
     this.call = call;
-    this.bool;
     this.isAuthSticky = call.argument("stickyAuth");
     this.uiThreadExecutor = new UiThreadExecutor();
     this.promptInfo =
