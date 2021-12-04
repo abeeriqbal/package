@@ -155,6 +155,7 @@ public class FlutterPluginPdfViewerPlugin implements MethodCallHandler {
             PdfRenderer.Page page = renderer.openPage(--pageNumber);
 
             double width = instance.context().getResources().getDisplayMetrics().densityDpi * page.getWidth();
+            
             double height = instance.context().getResources().getDisplayMetrics().densityDpi * page.getHeight();
             final double docRatio = width / height;
 

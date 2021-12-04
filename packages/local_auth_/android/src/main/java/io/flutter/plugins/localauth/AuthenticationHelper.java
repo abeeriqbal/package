@@ -231,6 +231,7 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
 
   @Override
   public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+    
     if (anyCryptoException == true) {
       completionHandler.onSuccess();
     } else {
