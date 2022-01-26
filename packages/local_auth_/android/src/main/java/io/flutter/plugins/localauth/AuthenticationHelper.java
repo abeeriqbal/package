@@ -139,7 +139,8 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
       anyCryptoException = true;
     }
     biometricPrompt = new BiometricPrompt(activity, uiThreadExecutor, this);
-    biometricPrompt.authenticate(promptInfo, cryptoObject);
+    biometricPrompt.authenticate(promptInfo);
+//    biometricPrompt.authenticate(promptInfo, cryptoObject);
   }
 
   /** Cancels the fingerprint authentication. */
@@ -231,16 +232,17 @@ class AuthenticationHelper extends BiometricPrompt.AuthenticationCallback
 
   @Override
   public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
-    
-    if (anyCryptoException == true) {
-      completionHandler.onSuccess();
-    } else {
-      if (cryptoObject != null && result != null && result.getCryptoObject() != null && cryptoObject.getCipher() == result.getCryptoObject().getCipher()) {
-        completionHandler.onSuccess();
-      } else {
-        completionHandler.onFailure();
-      }
-    }
+
+    //    if (anyCryptoException == true) {
+//      completionHandler.onSuccess();
+//    } else {
+//      if (cryptoObject != null && result != null && result.getCryptoObject() != null && cryptoObject.getCipher() == result.getCryptoObject().getCipher()) {
+//        completionHandler.onSuccess();
+//      } else {
+//        completionHandler.onFailure();
+//      }
+//    }
+    completionHandler.onSuccess();
     stop();
   }
 
